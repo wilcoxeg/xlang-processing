@@ -1,0 +1,143 @@
+---
+title: "Data Cleaning for X-Lang Procesing project"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+
+theme_set(theme_bw())
+options(digits=4)
+```
+
+```{r}
+
+set.seed(444)
+
+```
+
+```{r}
+
+clean_data = function(data) {
+
+df = data %>%
+  rename(
+    ia_text = ia.x
+  ) %>%
+  
+  mutate(len = str_length(ia_text)) %>%
+  
+  # Convert a word frequency from a proportion between 0 and 1 to the Zipf scale (see freq_to_zipf funciton in the word_freq documentation)
+  mutate(freq = log10(freq) + 9,
+         margin = ent - surp,
+         margin = ent - surp) %>%
+
+  group_by(trialid, itemid, uniform_id) %>%
+    arrange(ianum) %>%
+    mutate(prev_freq = lag(freq), prev2_freq = lag(prev_freq),
+           prev_len  = lag(len), prev2_len = lag(prev_len),
+           prev_surp = lag(surp), prev2_surp = lag(prev_surp),
+           prev_ent = lag(ent), prev2_ent = lag(prev_ent),
+           prev_margin = lag(margin), prev2_margin = lag(prev_margin)) %>%
+  ungroup() %>%
+  
+  #78 rows where the unigram probabiltiy was 0 ("domestication")
+  filter(! is.infinite(freq),
+         ! is.infinite(prev_freq),
+         ! is.infinite(prev2_freq)) %>%
+  
+  # We'll use firstrun.dur for the initial analysis
+  mutate(firstrun.dur = as.double(firstrun.dur)) %>%
+  mutate(firstrun.dur = if_else(is.na(firstrun.dur), 0, firstrun.dur)) %>% #Set the reading time for skipped words to 0
+  rename(psychometric = firstrun.dur) %>%
+  dplyr::select(psychometric, ia_text, itemid, ianum, uniform_id,
+                surp, prev_surp, prev2_surp,
+                len, prev_len, prev2_len,
+                freq, prev2_freq, prev_freq,
+                ent, prev_ent, prev2_ent
+                #margin, prev_margin, prev2_margin --> We won't look at margin in this analysis because it was not found to be a predictor previously
+                ) %>%
+  drop_na() %>%
+  
+  # Group by each individual word and take across-participant averages
+  group_by(itemid, ianum, ia_text, surp, prev_surp, prev2_surp, len, prev_len, prev2_len, freq, prev_freq, prev2_freq, ent, prev_ent, prev2_ent) %>%
+      summarise(psychometric = mean(psychometric)) %>%
+  ungroup()
+  
+return(df)
+
+}
+  
+```
+
+
+
+```{r}
+
+read_merge_data = function(lang) {
+  
+  rt_data = read.csv( paste("../data/langs/", lang, ".csv", sep=""), header = T, sep = ",") %>%
+  dplyr::select(-X, -subid, -trial, -supplementary_id)
+
+  pred_data_short_context = read.csv(paste("../data/results/short_context/mgpt_",lang,"_preds.csv", sep=""), header = T, sep = "\t") %>%
+  mutate(ia_idx = ianum) %>%
+  rename(trialid = sentnum, sentnum = trialid )%>%
+  group_by(trialid) %>%
+    arrange(sentnum, ia_idx) %>%
+    mutate(ianum = 1:n()) %>%
+  ungroup() %>%
+  dplyr::select(-sentnum, -ia_idx)
+  
+  merged_df_short = merge(rt_data, pred_data_short_context, by = c("trialid", "ianum")) %>%
+    filter(ia.x == ia.y) %>%
+    clean_data(.) %>%
+    mutate(context = "short")
+  
+    n_dropped_rows = nrow(rt_data) - nrow(merged_df_short)
+    print(paste(lang, " short context data: Dropping ", n_dropped_rows, " rows , ~", round(10 * (n_dropped_rows/nrow(rt_data))),"% of the data due to merge conflicts", sep=""))
+  
+  pred_data_long_context = read.csv(paste("../data/results/long_context/mgpt_",lang,"_long_preds.csv", sep=""), header = T, sep = "\t") %>%
+    mutate(ianum = ianum + 1)
+  
+  merged_df_long =  merge(rt_data, pred_data_long_context, by = c("trialid", "ianum")) %>%
+    filter(ia.x == ia.y) %>%
+    clean_data(.) %>%
+    mutate(context = "long")
+  
+    n_dropped_rows = nrow(rt_data) - nrow(merged_df_long)
+    print(paste(lang, " long context data: Dropping ", n_dropped_rows, " rows , ~", round(10 * (n_dropped_rows/nrow(rt_data))),"% of the data due to merge conflicts", sep=""))
+  
+  merged_df = rbind(merged_df_long, merged_df_short)
+  
+  write.csv(merged_df, paste0("./cleaned_data/", lang, "_clean_data.csv"))
+  
+}
+
+
+```
+
+```{r}
+langs = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "sp", "tr", "ru")
+
+for (lang in langs) {
+
+  df = read_merge_data(lang)
+  
+}
+
+```

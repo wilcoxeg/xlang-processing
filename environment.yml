@@ -1,0 +1,33 @@
+name: xlang-processing
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.7
+  - numpy
+  - pandas
+  - scikit-learn
+  - tqdm
+  - matplotlib
+  - scipy
+  - pylint=2.4.4
+  - pip
+  - pip:
+    - seaborn
+    - ipdb
+    - adjusttext
+    - statsmodels
+    - mosestokenizer
+    - gdown
+    - tzlocal
+    - simplegeneric
+    - nltk
+    - notebook
+    - sacremoses
+    - intervaltree
+    - rpy2
+    - wordfreq
+    - mecab-python3
+    - mecab-ko-dic
+
