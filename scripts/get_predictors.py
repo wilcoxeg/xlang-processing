@@ -17,7 +17,8 @@ MODEL_TO_SPECIAL_TOKENS = {
 MODEL_NAME = {
 	"mgpt" : "sberbank-ai/mGPT"
 }
-LANG_DATA_PATH = "../data/langs"
+LANG_DATA_PATH = "../data/langs_l2"
+#LANG_DATA_PATH = "../data/langs_l1"
 
 def ordered_string_join(x, j=''):
 	s = sorted(x, key=lambda y: y[0])
@@ -119,6 +120,8 @@ def get_predictors(lang, model):
 		stats = stats + get_stats(v, k, lang, model)
 
 	df_export = pd.DataFrame(stats, columns = ["trialid", "ianum", "ia", "freq", "surp", "ent"])
+	print(df_export)
+
 	df_export.to_csv("../data/results/"+model+"_"+lang+"_long_preds.csv", sep="\t")
 
 

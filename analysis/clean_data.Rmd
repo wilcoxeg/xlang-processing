@@ -61,11 +61,23 @@ df = data %>%
          ! is.infinite(prev_freq),
          ! is.infinite(prev2_freq)) %>%
   
-  # We'll use firstrun.dur for the initial analysis
+  # dur = total reading time
+  mutate(dur = as.double(dur)) %>%
+  mutate(dur = if_else(is.na(dur), 0, dur)) %>% #Set the reading time for skipped words to 0
+  rename(total_rt = dur) %>%
+  
+  # firstrun.dur = "gaze duration"
   mutate(firstrun.dur = as.double(firstrun.dur)) %>%
   mutate(firstrun.dur = if_else(is.na(firstrun.dur), 0, firstrun.dur)) %>% #Set the reading time for skipped words to 0
-  rename(psychometric = firstrun.dur) %>%
-  dplyr::select(psychometric, ia_text, itemid, ianum, uniform_id,
+  rename(gaze_rt = firstrun.dur) %>%
+  
+  # firstfix.dur = "first fixation"
+  mutate(firstfix.dur = as.double(firstfix.dur)) %>%
+  mutate(firstfix.dur = if_else(is.na(firstfix.dur), 0, firstfix.dur)) %>% #Set the reading time for skipped words to 0
+  rename(firstfix_rt = firstfix.dur) %>%
+  
+  dplyr::select(total_rt, gaze_rt, firstfix_rt,
+                ia_text, itemid, ianum, uniform_id,
                 surp, prev_surp, prev2_surp,
                 len, prev_len, prev2_len,
                 freq, prev2_freq, prev_freq,
@@ -76,7 +88,9 @@ df = data %>%
   
   # Group by each individual word and take across-participant averages
   group_by(itemid, ianum, ia_text, surp, prev_surp, prev2_surp, len, prev_len, prev2_len, freq, prev_freq, prev2_freq, ent, prev_ent, prev2_ent) %>%
-      summarise(psychometric = mean(psychometric)) %>%
+      summarise(total_rt = mean(total_rt),
+                gaze_rt = mean(gaze_rt),
+                firstfix_rt = mean(firstfix_rt)) %>%
   ungroup()
   
 return(df)
@@ -89,12 +103,12 @@ return(df)
 
 ```{r}
 
-read_merge_data = function(lang) {
+read_merge_data = function(lang, lx) {
   
-  rt_data = read.csv( paste("../data/langs/", lang, ".csv", sep=""), header = T, sep = ",") %>%
-  dplyr::select(-X, -subid, -trial, -supplementary_id)
+  rt_data = read.csv( paste("../data/langs_",lx,"/", lang, ".csv", sep=""), header = T, sep = ",") %>%
+  dplyr::select(-X, -subid, -trial)
 
-  pred_data_short_context = read.csv(paste("../data/results/short_context/mgpt_",lang,"_preds.csv", sep=""), header = T, sep = "\t") %>%
+  pred_data_short_context = read.csv(paste("../data/results_",lx,"/short_context/mgpt_",lang,"_preds.csv", sep=""), header = T, sep = "\t") %>%
   mutate(ia_idx = ianum) %>%
   rename(trialid = sentnum, sentnum = trialid )%>%
   group_by(trialid) %>%
@@ -111,7 +125,7 @@ read_merge_data = function(lang) {
     n_dropped_rows = nrow(rt_data) - nrow(merged_df_short)
     print(paste(lang, " short context data: Dropping ", n_dropped_rows, " rows , ~", round(10 * (n_dropped_rows/nrow(rt_data))),"% of the data due to merge conflicts", sep=""))
   
-  pred_data_long_context = read.csv(paste("../data/results/long_context/mgpt_",lang,"_long_preds.csv", sep=""), header = T, sep = "\t") %>%
+  pred_data_long_context = read.csv(paste("../data/results_",lx,"/long_context/mgpt_",lang,"_long_preds.csv", sep=""), header = T, sep = "\t") %>%
     mutate(ianum = ianum + 1)
   
   merged_df_long =  merge(rt_data, pred_data_long_context, by = c("trialid", "ianum")) %>%
@@ -124,7 +138,7 @@ read_merge_data = function(lang) {
   
   merged_df = rbind(merged_df_long, merged_df_short)
   
-  write.csv(merged_df, paste0("./cleaned_data/", lang, "_clean_data.csv"))
+  write.csv(merged_df, paste0("./cleaned_data/", lx, "/", lang, "_clean_data.csv"))
   
 }
 
@@ -132,11 +146,17 @@ read_merge_data = function(lang) {
 ```
 
 ```{r}
-langs = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "sp", "tr", "ru")
+langs = c("du", "en", "fi", "ge", "gr", "he", "it", "sp", "ko", "tr", "ru")
+
+# L2 Data does not include Korean
+# Also, we can drop EN
+#langs = c("du", "fi", "ge", "gr", "he", "it", "sp", "tr", "ru")
 
 for (lang in langs) {
+  
+  lx = "l2"
 
-  df = read_merge_data(lang)
+  df = read_merge_data(lang, lx)
   
 }
 
