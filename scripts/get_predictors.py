@@ -17,8 +17,9 @@ MODEL_TO_SPECIAL_TOKENS = {
 MODEL_NAME = {
 	"mgpt" : "sberbank-ai/mGPT"
 }
-LANG_DATA_PATH = "../data/langs_l2"
-#LANG_DATA_PATH = "../data/langs_l1"
+
+#LANG_DATA_PATH = "../data/langs_l2"
+LANG_DATA_PATH = "../data/rt_data_l1"
 
 def ordered_string_join(x, j=''):
 	s = sorted(x, key=lambda y: y[0])
@@ -113,16 +114,15 @@ def get_predictors(lang, model):
 		#by=['trialid', 'sentnum']).apply(lambda x: ordered_string_join(zip(x['ianum'], x['ia']), ' ')).to_dict()
 
 	sents = rt_df[['trialid', 'ianum', 'ia']].drop_duplicates().dropna().groupby(
-		by=['trialid']).apply(lambda x: ordered_string_join(zip(x['ianum'], x['ia']), ' ')).to_dict()
+		by=['trialid']).apply(lambda x: ordered_string_join(zip(x.index, x['ia']), ' ')).to_dict()
 
 	stats = []
 	for k, v in sents.items():
 		stats = stats + get_stats(v, k, lang, model)
 
 	df_export = pd.DataFrame(stats, columns = ["trialid", "ianum", "ia", "freq", "surp", "ent"])
-	print(df_export)
 
-	df_export.to_csv("../data/results/"+model+"_"+lang+"_long_preds.csv", sep="\t")
+	df_export.to_csv("../data/lm_results_raw/"+model+"_"+lang+"_long_preds.csv", sep="\t")
 
 
 def main():
@@ -131,6 +131,7 @@ def main():
 	# Dropping Estonian and Norwegian. Not supported by mGPT
 	filter_langs = ["ee", "no"]
 	langs = filter(lambda x: x not in filter_langs, langs)
+	langs = ["ru"]
 
 	for lang in langs:
 		get_predictors(lang, model)

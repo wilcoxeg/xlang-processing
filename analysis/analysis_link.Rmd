@@ -1,0 +1,455 @@
+---
+title: "Analysis for x linguistic processing"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+library(jmuOutlier) # For paired permutation tests
+
+#options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
+#library(jglmm)
+#jglmm_setup()
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r}
+
+set.seed(444)
+langs = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "sp", "tr", "ru")
+
+models = c("mgpt_sc", "mgpt_lc", "monot_30m", "monot_all")
+comps = c("target", "baseline")
+psychometric = "gaze_rt" # We're only gonna look at one psychometric here
+
+```
+
+
+
+## Compare Linear and Non-Linear GAMs
+
+```{r}
+
+model_cross_val = function(form, df, d_var, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  estimates <- c()
+  models <- c()
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    if(grepl("bs = 'cr'", form, fixed=TRUE)) {
+      model = gam(as.formula(form), data = trainData)
+    } else {
+      model = lm(as.formula(form), data = trainData)
+    }
+
+    stdev = sigma(model)
+    densities <- log(dnorm(testData[[d_var]],
+                          mean=predict(model, newdata=testData),
+                          sd=stdev))
+
+    estimates <- c(estimates, densities)
+  }
+
+  return(estimates)
+}
+
+```
+
+
+```{r}
+
+regression_names = c("linear_baseline", "linear_target", "nonlinear_baseline", "nonlinear_target")
+
+dll_raw_df = data.frame()
+for (lang in langs) {
+
+  print(paste0("Fitting model for ", lang))
+
+  for(m in models){
+    
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv"))%>%
+    filter(model == m)
+  
+    regression_forms = c(
+      # Linear Models
+      #paste0(psychometric, " ~ freq + prev_freq + len + prev_len"),
+      paste0(psychometric, " ~ te(freq, len, bs = 'cr') + te(prev_freq, prev_len, bs = 'cr')"),
+      paste0(psychometric, "~ surp + prev_surp + te(freq, len, bs = 'cr') + te(prev_freq, prev_len, bs = 'cr') "),
+      # Non-Linear Models
+      paste0(psychometric, " ~ te(freq, len, bs = 'cr') + te(prev_freq, prev_len, bs = 'cr')"),
+      paste0(psychometric, "~ s(surp, bs = 'cr', k = 6) + s(prev_surp, bs = 'cr', k = 6) + te(freq, len, bs = 'cr') + te(prev_freq, prev_len, bs = 'cr') ")
+    )
+    
+    loglik_df = data.frame(names=regression_names, forms=regression_forms) %>%
+      mutate(logliks = map(regression_forms, model_cross_val, df=df, d_var=psychometric )) %>%
+      dplyr::select(-forms)
+    
+    loglik_df = loglik_df %>% unnest(cols = c(logliks)) %>% mutate(lang = lang, psychometric = psychometric, model = m)
+    dll_raw_df = rbind(dll_raw_df, loglik_df)
+    
+  }
+}
+
+write.csv(dll_raw_df, "./dll_raw_df_stats.csv")
+```
+
+```{r}
+dll_stats_df = data.frame()
+dll_comp_stats_df = data.frame()
+for (m in models){
+    for(l in langs){
+
+        target_df_linear = dll_raw_df %>% filter(model == m, lang == l, names == "linear_target")
+        baseline_df_linear = dll_raw_df %>% filter(model == m, lang == l, names == "linear_baseline")
+        dll_linear = target_df_linear$logliks - baseline_df_linear$logliks
+        dll_stats_df = rbind(dll_stats_df, data.frame(dll = dll_linear, linear="linear", model = m, lang = l))
+        
+        target_df_nonlinear = dll_raw_df %>% filter(model == m, lang == l, names == "nonlinear_target")
+        baseline_df_nonlinear = dll_raw_df %>% filter(model == m, lang == l, names == "nonlinear_baseline")
+        dll_nonlinear = target_df_nonlinear$logliks- baseline_df_nonlinear$logliks
+        dll_stats_df = rbind(dll_stats_df, data.frame(dll = dll_nonlinear, linear = "non-linear", model = m, lang = l))
+        
+        dll_comp_stats_df = rbind(dll_comp_stats_df, data.frame(dll_linear = dll_linear, dll_nonlinear = dll_nonlinear, model = m, lang = l))
+    }
+}
+
+```
+
+
+
+```{r}
+
+linear_comp_df = data.frame()
+for (m in models){
+    for(l in langs){
+
+        target_df_linear = dll_raw_df %>% filter(model == m, lang == l, names == "linear_target")
+        baseline_df_linear = dll_raw_df %>% filter(model == m, lang == l, names == "linear_baseline")
+        dll_linear = data.frame(dll = target_df_linear$logliks - baseline_df_linear$logliks) %>%
+          drop_na() %>%
+          mutate( m = mean(dll), s=sd(dll)) %>%
+          filter(dll < m + s * 3, dll > m - s * 3)
+        dll_linear = dll_linear$dll
+        #dll_linear = dll_linear[!is.na(dll_linear)]
+        linear_ttest = perm.test(dll_linear, num.sim = 1)
+        
+        target_df_nonlinear = dll_raw_df %>% filter(model == m, lang == l, names == "nonlinear_target")
+        baseline_df_nonlinear = dll_raw_df %>% filter(model == m, lang == l, names == "nonlinear_baseline")
+        dll_nonlinear = data.frame(dll = target_df_nonlinear$logliks- baseline_df_nonlinear$logliks) %>%
+          drop_na() %>%
+          mutate( m = mean(dll), s=sd(dll)) %>%
+          filter(dll < m + s * 3, dll > m - s * 3)
+        dll_nonlinear = dll_nonlinear$dll
+        #dll_nonlinear = dll_nonlinear[!is.na(dll_nonlinear)]
+        nonlinear_ttest = perm.test(dll_nonlinear, num.sim = 1)
+        
+        comp_ttest = perm.test(dll_nonlinear, dll_linear, num.sim = 1000)
+        
+        dll_df_linear = data.frame(
+          m = mean(dll_linear), upper = mean(dll_linear) + (1.96 * std.error(dll_linear)), lower = mean(dll_linear) - (1.96 * std.error(dll_linear)),
+          ttest_pval = linear_ttest$p.value,
+          #Comparison information (moved)
+          ttest_pval_comp = comp_ttest$p.value,
+          # Meta info
+          lang = l, model = m, is_linear = "linear"
+        )
+        
+        dll_df_nonlinear = data.frame(
+          m = mean(dll_nonlinear), upper = mean(dll_nonlinear) + (1.96 * std.error(dll_nonlinear)), lower = mean(dll_nonlinear) - (1.96 * std.error(dll_nonlinear)), ttest_pval = nonlinear_ttest$p.value,
+          #Comparison information (moved)
+          ttest_pval_comp = comp_ttest$p.value,
+          # Meta info
+          lang = l, model = m, is_linear = "nonlinear"
+        )
+        
+        dll_df = rbind(dll_df_linear, dll_df_nonlinear)
+        
+        linear_comp_df = rbind(linear_comp_df, dll_df)
+
+  }
+}
+
+linear_comp_df %>%
+  filter(ttest_pval_comp < 0.05)
+
+```
+
+
+
+```{r}
+
+linear_comp_df %>%
+  mutate(lang = factor(lang, levels = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"),
+       labels = c("Dutch", "English", "Finnish", "German", "Greek", "Hebrew", "Italian", "Korean", "Russian",
+                  "Spanish", "Turkish"))) %>%
+  mutate(is_linear = if_else(is_linear == "linear", "Linear", "Non-linear")) %>%
+  #mutate(context = if_else(context == "long", "Long Context", "Short Context")) %>%
+  ggplot(aes(x = lang, y = m, color = is_linear, shape = is_linear)) +
+    #geom_hline(yintercept=0, color = "blue") +
+    geom_point(position = position_dodge(width = 0.5)) +
+    geom_errorbar(aes(ymin = lower, ymax= upper, width = 0.1), position = position_dodge(width = 0.5)) +
+    facet_grid(model~., labeller = labeller(model = as_labeller(c(mgpt_lc="mGPT\n(long)", mgpt_sc="mGPT\n(short)", monot_30m="monoT\n(30m)", monot_all="monoT\n(all)")))) +
+
+    scale_color_manual(name="Model Type", labels=c("Linear", "Non-linear"), values = c("#6488d6", "#29bc8b")) +
+    scale_shape_manual(name="Model Type", labels=c("Linear", "Non-linear"), values = c(19, 17)) +
+
+    ylab("Delta Log Liklihood (per word)") +
+    #labs(color = "Model Type") +
+    #scale_shape(guide = "none") +
+  theme(
+    legend.position = "bottom",
+    axis.title.x = element_blank(),
+    text = element_text(family = "serif"),
+    axis.text.x = element_text(angle = 35, hjust = 1)
+  )
+
+ggsave("./images/dll_linear_comp.pdf", device ="pdf", width = 4, height = 4)
+
+
+```
+
+
+
+## Shape of surprisal / RT relationship
+
+```{r}
+
+fit_gam_inner = function(bootstrap_sample, mean_predictors, is_linear) {
+  
+  df = bootstrap_sample$data
+  weights = tabulate(as.integer(bootstrap_sample), nrow(df))
+  
+  if (is_linear) {
+     
+    m = gam(psychometric ~ surp + prev_surp + te(freq, len, bs = 'cr') + te(prev_freq, prev_len, bs = 'cr'), data = df, weights = weights)
+    terms_to_predict = c("surp", "prev_surp")
+  } else {
+    m = gam(psychometric ~ s(surp, bs = 'cr', k = 6) + s(prev_surp, bs = 'cr', k = 6) + te(freq, len, bs = 'cr') + te(prev_freq, prev_len, bs = 'cr'), data = df, weights = weights)
+    terms_to_predict = c("s(surp)", "s(prev_surp)")
+
+  }
+  
+  newdata = data.frame(surp=seq(0,20,by=0.1),
+                       prev_surp=mean_predictors$surp,
+                       freq=mean_predictors$freq, prev_freq=mean_predictors$freq,
+                       len=mean_predictors$freq, prev_len=mean_predictors$freq)
+  
+  # Returns a matrix N_samples * N_terms.
+  per_term_predictions = predict(m, newdata=newdata, terms=terms_to_predict, type="terms")
+
+  # Additive model -- sum across predictor response contributions (matrix columns).
+  predictions = rowSums(per_term_predictions)
+
+  return(newdata %>% mutate(y=predictions))
+}
+
+fit_gam = function(df, mean_predictors, is_linear, alpha=0.05) {
+  # Bootstrap-resample data
+  boot_models = df %>% bootstraps(times=10) %>% 
+   # Fit a GAM and get predictions for each sample
+    mutate(smoothed=map(splits, fit_gam_inner, mean_predictors=mean_predictors, is_linear = is_linear))
+  
+  # Extract mean and 5% and 95% percentile y-values for each surprisal value
+  result = boot_models %>% 
+    unnest(smoothed) %>% 
+    dplyr::select(surp, y) %>% 
+    group_by(surp) %>% 
+      summarise(y_lower=quantile(y, alpha / 2), 
+                y_upper=quantile(y, 1 - alpha / 2),
+                y=mean(y)) %>% 
+    ungroup()
+  
+  return (result)
+}
+
+```
+
+
+
+
+Get linear + non-linear gam smooths for each of our languages
+
+```{r}
+
+xlang_linear_smooths = data.frame()
+xlang_nonlinear_smooths = data.frame()
+
+for(m in models){
+  
+for (lang in langs) {
+  print(paste0("Fitting model for ", lang))
+  merged_df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>% rename(psychometric = gaze_rt)
+  mean_predictors = merged_df %>% summarise(surp = mean(surp), len = mean(len), freq = mean(freq))
+  smooths = merged_df %>% fit_gam(., mean_predictors, is_linear=T)
+  #Fix 0 surprisal = 0 ms
+  gam_smooths = smooths %>% mutate(delta = 0 - y[1], y=y + delta, y_lower= y_lower + delta, y_upper=y_upper + delta)
+  xlang_linear_smooths = rbind(xlang_linear_smooths, gam_smooths %>% mutate(lang = lang, model = m, linear = "linear"))
+}
+
+for (lang in langs) {
+  print(paste0("Fitting model for ", lang))
+  merged_df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>% rename(psychometric = gaze_rt)
+  mean_predictors = merged_df %>% summarise(surp = mean(surp), len = mean(len), freq = mean(freq))
+  smooths = merged_df %>% fit_gam(., mean_predictors, is_linear=F)
+  #Fix 0 surprisal = 0 ms
+  gam_smooths = smooths %>% mutate(delta = 0 - y[1], y=y + delta, y_lower= y_lower + delta, y_upper=y_upper + delta)
+  xlang_nonlinear_smooths = rbind(xlang_nonlinear_smooths, gam_smooths %>% mutate(lang = lang, model = m, linear = "non-linear" ))
+}
+}
+
+```
+
+```{r}
+
+write.csv(xlang_linear_smooths, "./gam_saves/nonlinear.csv")
+write.csv(xlang_nonlinear_smooths, "./gam_saves/linear.csv")
+
+```
+
+## Density Data
+
+```{r}
+
+get_d_points = function(df) {
+    x = density(df$surp)$x
+    y = density(df$surp)$y
+    return(data.frame(x, y))
+  }
+
+density_data = data.frame()
+
+for (m in models){
+for(l in langs) {
+  dummy_df = read.csv(paste0("../data/merged_data/", l, ".csv")) %>% filter(model == m) %>%
+      do({get_d_points(.)}) %>%
+      filter(x>0, x<20)
+  density_data = rbind(density_data, dummy_df %>% mutate(lang = l, model = m))
+}}
+
+density_data = density_data %>%
+  mutate(lang = factor(lang, levels = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"),
+       labels = c("Dutch", "English", "Finnish", "German", "Greek", "Hebrew", "Italian", "Korean", "Russian",
+                  "Spanish", "Turkish")))
+
+
+```
+
+## Plot Surprisal / RT relationship for Short & Long Contexts
+
+```{r}
+xlang_nonlinear_smooths = read.csv( "./gam_saves/nonlinear.csv") %>%
+  mutate(lang = factor(lang, levels = c("en", "du", "ge", "gr", "it", "ru", "sp", "fi", "he", "ko", "tr"),
+       labels = c("English", "Dutch", "German", "Greek", "Italian", "Russian", "Spanish", "Finnish", "Hebrew",
+                  "Korean", "Turkish")))
+  #mutate(lang = factor(lang, levels = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"),
+       #labels = c("Dutch", "English", "Finnish", "German", "Greek", "Hebrew", "Italian", "Korean", "Russian",
+                  #"Spanish", "Turkish")))
+
+xlang_linear_smooths = read.csv( "./gam_saves/linear.csv") %>%
+  mutate(lang = factor(lang, levels = c("en", "du", "ge", "gr", "it", "ru", "sp", "fi", "he", "ko", "tr"),
+       labels = c("English", "Dutch", "German", "Greek", "Italian", "Russian", "Spanish", "Finnish", "Hebrew",
+                  "Korean", "Turkish")))
+  #mutate(lang = factor(lang, levels = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"),
+       #labels = c("Dutch", "English", "Finnish", "German", "Greek", "Hebrew", "Italian", "Korean", "Russian",
+                  #"Spanish", "Turkish")))
+
+```
+
+
+```{r}
+
+# Surprisal curves for long context
+  ggplot() +
+      annotate("rect", xmin=0, xmax=20, ymin=-20,ymax=-8, fill="#f4f4f4", color="grey", alpha=1, size = 0.2) +
+      geom_line(data = density_data, aes(x=x, y=y*50 - 18), color="#aaaaaa", size = 0.4) +
+      geom_line(data = xlang_linear_smooths, aes(x=surp, y=y, color = linear), size=0.7) +
+      geom_line(data = xlang_nonlinear_smooths, aes(x=surp, y=y, color = linear), size=0.5, linetype = "dashed") +
+      geom_ribbon(data = xlang_nonlinear_smooths, aes(x=surp, ymin=y_lower, ymax=y_upper, fill = linear), alpha=0.3, size=0.5) +
+      geom_ribbon(data = xlang_linear_smooths, aes(x=surp, ymin=y_lower, ymax=y_upper, fill = linear), alpha=0.3, size=0.5) +
+      scale_x_continuous(labels=c(0, 10, 20), breaks=c(0, 10, 20), minor_breaks = NULL) +
+      facet_grid(model~lang, labeller = labeller(model = as_labeller(c(mgpt_lc="mGPT (long)", mgpt_sc="mGPT (short)", monot_30m="monoT (30m)", monot_all="monoT (all)")))) +
+      ylab("Slowdown due to Surprisal (ms)") +
+      xlab("Surprisal of Word (bits)") +
+      #scale_color_manual(values = c("#b7b7b7", "#29bc8b")) +
+      scale_color_manual(values = c("#6488d6", "#29bc8b")) +
+      scale_fill_manual(values = c("#6488d6", "#29bc8b")) +
+      scale_linetype_manual(values = c("a", "b")) +
+      #ggtitle("Effect of Surprisal on Reading Time across Languages \n Long Context Window")
+  theme(
+    text = element_text(family = "serif"),
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  )
+
+  ggsave("./images/surp_link.pdf", device = "pdf", height = 5, width = 10)
+
+
+```
+
+# PLotting smaller image
+
+```{r}
+
+xlang_linear_smooths_promo = xlang_linear_smooths %>%
+  filter(model == "mgpt_lc")
+
+xlang_nonlinear_smooths_promo = xlang_nonlinear_smooths %>%
+  filter(model == "mgpt_lc")
+
+#density_data_promo = density_data %>%
+  #filter(model == "mgpt_lc")
+
+# Surprisal curves for long context
+  ggplot() +
+      #annotate("rect", xmin=0, xmax=20, ymin=-20,ymax=-8, fill="#f4f4f4", color="grey", alpha=1, size = 0.2) +
+      #geom_line(data = density_data_promo, aes(x=x, y=y*50 - 18), color="#aaaaaa", size = 0.4) +
+      geom_line(data = xlang_linear_smooths_promo, aes(x=surp, y=y, color = linear), size=0.7) +
+      geom_line(data = xlang_nonlinear_smooths_promo, aes(x=surp, y=y, color = linear), size=0.5, linetype = "dashed") +
+      geom_ribbon(data = xlang_nonlinear_smooths_promo, aes(x=surp, ymin=y_lower, ymax=y_upper, fill = linear), alpha=0.3, size=0.5) +
+      geom_ribbon(data = xlang_linear_smooths_promo, aes(x=surp, ymin=y_lower, ymax=y_upper, fill = linear), alpha=0.3, size=0.5) +
+      scale_x_continuous(labels=c(0, 10, 20), breaks=c(0, 10, 20), minor_breaks = NULL) +
+      facet_grid(model~lang, labeller = labeller(model = as_labeller(c(mgpt_lc="multilingual GPT", mgpt_sc="mGPT (short)", monot_30m="monoT (30m)", monot_all="monoT (all)")))) +
+      ylab("Slowdown due to Surprisal (ms)") +
+      xlab("Surprisal of Word (bits)") +
+      #scale_color_manual(values = c("#b7b7b7", "#29bc8b")) +
+      scale_color_manual(values = c("#6488d6", "#29bc8b")) +
+      scale_fill_manual(values = c("#6488d6", "#29bc8b")) +
+      scale_linetype_manual(values = c("a", "b")) +
+      ylim(0, 80) +
+      #ggtitle("Effect of Surprisal on Reading Time across Languages \n Long Context Window")
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    legend.title=element_blank()
+  )
+
+  ggsave("./images/surp_link_talk_both.pdf", device = "pdf", height = 3, width = 10)
+
+
+```
+
+
+

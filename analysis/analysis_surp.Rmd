@@ -1,0 +1,391 @@
+---
+title: "Analysis for x linguistic processing"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+library(jmuOutlier) # For paired permutation tests
+
+#options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
+#library(jglmm)
+#jglmm_setup()
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r}
+
+set.seed(444)
+langs = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "sp", "tr", "ru")
+psychometrics = c("total_rt", "gaze_rt", "firstfix_rt")
+models = c("mgpt_sc", "mgpt_lc", "monot_30m", "monot_all")
+comps = c("target", "baseline")
+
+```
+
+## Compute DLL for Each Language
+
+```{r}
+
+model_cross_val = function(form, df, d_var, mixed_effects, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  estimates <- c()
+  models <- c()
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    if(mixed_effects){
+      #model = lmer(as.formula(form), data = trainData)
+      model = jglmm(as.formula(form), data = trainData)
+
+    } else {
+      model = lm(as.formula(form), data = trainData)
+    }
+
+    stdev = sigma(model)
+    densities <- log(dnorm(testData[[d_var]],
+                          mean=predict(model, newdata=testData),
+                          sd=stdev))
+
+    estimates <- c(estimates, densities)
+  }
+
+  return(estimates)
+}
+
+```
+
+
+```{r}
+
+
+regression_names = c("target", "baseline")
+# "bl" = baseline model with full surprisals, 0 = surprisal dropped at slot 0 i.e. the current word
+
+dll_raw_df = data.frame()
+for (lang in langs) {
+
+  print(paste0("Fitting model for ", lang))
+  
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv"))
+  
+  for (m in models) {
+    
+    df_eval = df %>% filter(model == m) %>%
+      drop_na()
+  
+    for (psychometric in psychometrics) {
+      
+      regression_forms = c(
+        paste0(psychometric, " ~ surp + prev_surp + prev2_surp + freq + len + prev_freq + prev_len + prev2_freq + prev2_len"),
+        paste0(psychometric, " ~ freq + len + prev_freq + prev_len + prev2_freq + prev2_len")
+      )
+      regression_names = c("target", "baseline")
+
+      
+      loglik_df = data.frame(names=regression_names, forms=regression_forms) %>%
+        mutate(logliks = map(regression_forms, model_cross_val, df=df_eval, d_var=psychometric, mixed_effects=F )) %>%
+        dplyr::select(-forms)
+      
+      loglik_df = loglik_df %>% unnest(cols = c(logliks)) %>% mutate(lang = lang, psychometric = psychometric, model = m)
+      dll_raw_df = rbind(dll_raw_df, loglik_df)
+      
+    }
+  }
+}
+
+```
+
+
+
+
+## Data for each language individually
+
+```{r}
+comps = c("target")
+
+dll_xlang_surp_df = data.frame()
+for(l in langs){
+  
+  print(paste0("Tests for ", l)) 
+  
+  for (ps in psychometrics){
+    for(c in comps){
+
+      for(m in models) {
+
+        if(c != "baseline") {
+          target_df = dll_raw_df %>% filter(psychometric == ps, names == c, lang == l, model == m)
+          baseline_df = dll_raw_df %>% filter(psychometric == ps, names == "baseline", lang == l, model == m)
+          dll = target_df$logliks - baseline_df$logliks
+          dll = dll[!is.na(dll)]
+          ttest = perm.test(dll, num.sim = 500)
+          dll_df = data.frame(comp = c, mean = mean(dll), upper = mean(dll) + (1.96 * std.error(dll)),
+                              lower = mean(dll) - (1.96 * std.error(dll)), ttest_pval = ttest$p.value,
+                              lang = l, psychometric = ps, model = m)
+          dll_xlang_surp_df = rbind(dll_xlang_surp_df, dll_df)
+        }
+      }
+    }
+  }
+}
+
+```
+
+```{r}
+
+options(scipen=999)
+x = dll_xlang_surp_df %>%
+  filter(model == "monot_all" ) %>%
+  filter(psychometric == "gaze_rt")
+
+x$mean
+
+var(x$mean)
+  
+
+```
+
+## Data for languages as a whole
+
+```{r}
+
+dll_agg_surp_df = data.frame()
+for (ps in psychometrics){
+  for(c in comps){
+    for(m in models) {
+
+        if(c != "baseline") {
+          target_df = dll_raw_df %>% filter(psychometric == ps, names == c, model == m)
+          baseline_df = dll_raw_df %>% filter(psychometric == ps, names == "baseline", model == m)
+          dll = target_df$logliks - baseline_df$logliks
+          dll = dll[!is.na(dll)]
+          ttest = perm.test(dll, num.sim = 500)
+          dll_df = data.frame(comp = c, mean = mean(dll), upper = mean(dll) + (1.96 * std.error(dll)),
+                              lower = mean(dll) - (1.96 * std.error(dll)), ttest_pval = ttest$p.value,
+                              lang = "All", psychometric = ps, model = m)
+          dll_agg_surp_df = rbind(dll_agg_surp_df, dll_df)
+        }
+    }
+  }
+}
+
+
+```
+
+
+
+Plotting for these results
+
+
+```{r}
+
+# Merge the dataframes
+dll_surp_plotting_df = rbind(dll_xlang_surp_df, dll_agg_surp_df)
+
+options(scipen=999)
+
+
+dll_surp_plotting_df %>%
+  mutate(lang = factor(lang, levels = c("All", "du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"),
+       labels = c("All", "Dutch", "English", "Finnish", "German", "Greek", "Hebrew", "Italian", "Korean", "Russian",
+                  "Spanish", "Turkish"))) %>%
+  filter(model %in% c("mgpt_lc", "monot_all", "monot_30m")) %>%
+  filter(comp == "target") %>%
+  rename(target = comp) %>%
+  mutate(sig = case_when( ttest_pval >= 0.05 ~ " ",
+                          ttest_pval < 0.05 & ttest_pval >= 0.01  ~ "*",
+                          ttest_pval < 0.01 & ttest_pval >= 0.001  ~ "**",
+                          ttest_pval < 0.001  ~ "***")) %>%
+  mutate(psychometric = case_when(psychometric == "firstfix_rt" ~ "First Fixation", 
+                                  psychometric == "gaze_rt" ~ "Gaze Duration", 
+                                  psychometric == "total_rt" ~ "Total Fixation")) %>%
+  mutate(model = case_when(model == "mgpt_lc" ~ "mGPT",
+                           model == "monot_all" ~ "monoT (all)",
+                           model == "monot_30m" ~ "monoT (30m)")) %>%
+  mutate(model = factor(model, levels = c("mGPT", "monoT (all)", "monoT (30m)"))) %>%
+  ggplot(aes(x = psychometric, y = mean, color = psychometric)) +
+    geom_hline(yintercept=0, color="black", linetype="dashed", alpha =0.5) +
+    geom_point(position = position_dodge(width = 0.6)) +
+    geom_text(aes(y = 0.08, label = sig), size = 3, show.legend = FALSE) +
+    geom_errorbar(aes(ymin=lower, ymax=upper), width = 0.1, position = position_dodge(width = 0.6)) +
+    ylab("Delta Log Liklihood (average  per word)") + 
+    xlab("") +
+    facet_grid(model~lang) +
+    labs(color = "Eye Movement Measure") +
+    #scale_x_discrete(labels = c(bquote(w[t-2]), bquote(w[t-1]), bquote(w[t]))) +
+    #scale_color_manual(values = c("#a1dab4", "#41b6c4", "#225ea8")) +
+    #ggtitle("Contribution of Surprisal to ΔLL") +
+  theme(
+    text = element_text(family="serif"),
+    legend.position = "bottom",
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank()#,
+    #panel.border = element_rect(color = "grey", fill =  NA, size = 0.5)
+  )
+
+ggsave("./images/dll_surprisal.pdf", device = "pdf", width = 9.2, height = 4)
+
+
+```
+
+## Compare DLL to Linguistic Exposure
+
+```{r}
+
+lang_ppl = data.frame( lang = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"  ),
+                       family = c("Indo-European", "Indo-European", "Uralic", "Indo-European", "Indo-European", "Semetic", "Indo-European", "Koreanic", "Indo-European", "Indo-European", "Turkic"),
+                            ppl = c(8.78, 16.40, 15.05, 10.88, 7.56, 11.01, 10.53,  10.92, 9.15, 12.93, 9.79 ))
+
+lang_ppl_df = dll_xlang_surp_df %>%
+  filter(psychometric == "gaze_rt") %>%
+  merge(lang_ppl, by = "lang") %>%
+  filter(comp == "target") %>%
+  dplyr::select(lang, mean, ppl, family, model) %>%
+  mutate(measure = "Language")
+
+dll_ppl_fam = lang_ppl_df %>%
+  group_by(family, model) %>%
+    summarise(mean = mean(mean),
+              ppl = mean(ppl)) %>%
+  ungroup() %>%
+  mutate(lang = family) %>% #just to merge them
+  mutate(measure = "Language Family") 
+
+dll_ppl_plot = rbind(lang_ppl_df, dll_ppl_fam)
+
+```
+
+```{r}
+
+mgpt_cor_test = lang_ppl_df %>% filter(model == "mgpt_lc")
+
+cor.test(mgpt_cor_test$mean, mgpt_cor_test$ppl)
+
+dll_ppl_plot %>%
+  filter(model == "mgpt_lc") %>%
+  ggplot(aes(x=ppl, y = mean, label = lang, color = measure)) +
+  geom_smooth(method = "lm") +
+  geom_point(size = 2) +
+  #geom_errorbar(aes(ymin=lower, ymax=upper), width = 0.3) +
+  geom_label_repel(family="serif") +
+  ylab("Delta Log Liklihood (per word)") + 
+  xlab("Test Perplexity reported in Shliazhko et al. (2022)") +
+  facet_wrap(~measure, scales = "free_x") +
+  scale_color_manual(values = c("#41b6c4", "#225ea8")) +
+  theme(
+    legend.position = "none",
+    text = element_text(family="serif")
+
+  )
+
+ggsave("./images/dll_vs_ppl.pdf", device="pdf", width = 5, height = 3)
+
+
+```
+
+### Analysis for all languages
+
+Analysis for all data with random by-language effects
+
+```{r}
+# =======================
+# FYI - RUNNING THIS BLOCK TAKES A LONG TIME BECAUSE THE REGRESSIONS HAVE A LOT OF MIXED EFFECTS!
+# =======================
+
+regression_names = c("target", "baseline")
+
+df_all_langs = data.frame()
+for (lang in langs) {
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    mutate(lang = as.factor(lang))
+  df_all_langs = rbind(df_all_langs, df)
+}
+
+#Scale things due to convergence issues w/ the random effects
+df_all_langs = df_all_langs %>%
+  group_by(model) %>%
+    mutate(surp = scale(surp), len = scale(len), freq = scale(freq), gaze_rt = scale(gaze_rt), firstfix_rt = scale(firstfix_rt), total_rt = scale(total_rt)) %>%
+  ungroup()
+df_all_langs= df_all_langs[sample(1:nrow(df_all_langs)), ]
+  
+
+dll_raw_df = data.frame()
+for (m in models){
+for (psychometric in c("gaze_rt")) {
+    
+  regression_forms = c(
+    paste0(psychometric, " ~ surp + prev_surp + prev2_surp + freq + len + prev_freq + prev_len + prev2_freq + prev2_len + (surp + prev_surp + prev2_surp + freq + len + prev_freq + prev_len + prev2_freq + prev2_len | lang)"),
+    paste0(psychometric, " ~ freq + len + prev_freq + prev_len + prev2_freq + prev2_len + (freq + len + prev_freq + prev_len + prev2_freq + prev2_len | lang)")
+  )
+  
+  to_fit_df = df_all_langs %>% filter(model == m) %>% drop_na()
+  
+  loglik_df = data.frame(names=regression_names, forms=regression_forms) %>%
+    mutate(logliks = map(regression_forms, model_cross_val, df=to_fit_df, d_var=psychometric, mixed_effects=T )) %>%
+    dplyr::select(-forms)
+  
+  loglik_df = loglik_df %>% unnest(cols = c(logliks)) %>% mutate(psychometric = psychometric, model = m)
+  dll_raw_df = rbind(dll_raw_df, loglik_df)
+}
+}
+
+# Tests for mgpt model
+target_df = dll_raw_df %>% filter(names == "target", model == "mgpt_lc")
+baseline_df = dll_raw_df %>% filter(names == "baseline", model == "mgpt_lc")
+dll = target_df$logliks - baseline_df$logliks
+dll = dll[!is.na(dll)]
+mean(dll)
+test = perm.test(dll, num.sim = 1000)
+test
+
+# Tests for monolingual (all) model
+target_df = dll_raw_df %>% filter(names == "target", model == "monot_all")
+baseline_df = dll_raw_df %>% filter(names == "baseline", model == "monot_all")
+dll = target_df$logliks - baseline_df$logliks
+dll = dll[!is.na(dll)]
+mean(dll)
+test = perm.test(dll, num.sim = 1000)
+test
+
+# Tests for monolingual (30m) model
+target_df = dll_raw_df %>% filter(names == "target", model == "monot_30m")
+baseline_df = dll_raw_df %>% filter(names == "baseline", model == "monot_30m")
+dll = target_df$logliks - baseline_df$logliks
+dll = dll[!is.na(dll)]
+mean(dll)
+test = perm.test(dll, num.sim = 1000)
+test
+
+```
+
+
+
+
+
+
+
+
+

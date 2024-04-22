@@ -1,0 +1,174 @@
+---
+title: "Data Cleaning for X-Lang Procesing project"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+
+theme_set(theme_bw())
+options(digits=4)
+set.seed(444)
+pipe_message = function(.data, status) {message(status); .data}
+
+
+langs = c("du", "en", "fi", "ge", "gr", "he", "it", "sp", "ko", "tr", "ru")
+models = c("mgpt_sc", "mgpt_lc", "monot_all", "monot_30m")
+
+```
+
+
+```{r}
+
+do_lags = function(df) {
+  
+  result = df %>%
+    arrange(trialid, ianum) %>%
+    group_by(trialid) %>%
+      mutate(
+        prev_surp = lag(surp),
+        prev2_surp = lag(prev_surp),
+        
+        prev_freq = lag(freq),
+        prev2_freq = lag(prev_freq),
+        
+        prev_len = lag(len),
+        prev2_len = lag(prev_len),
+        
+        prev_ent = lag(ent),
+        prev2_ent = lag(prev_ent)
+    ) %>%
+    ungroup()
+  
+}
+
+```
+
+
+```{r}
+
+for (lang in langs) {
+  
+  # HUMAN RT DATA
+  rt_data = read.csv( paste("../data/rt_data_l1/", lang, ".csv", sep=""), header = T, sep = ",") %>%
+    # dur = total reading time
+    mutate(dur = as.double(dur)) %>%
+    mutate(dur = if_else(is.na(dur), 0, dur)) %>% #Set the reading time for skipped words to 0
+    rename(total_rt = dur) %>%
+    
+    # firstrun.dur = "gaze duration"
+    mutate(firstrun.dur = as.double(firstrun.dur)) %>%
+    mutate(firstrun.dur = if_else(is.na(firstrun.dur), 0, firstrun.dur)) %>% #Set the reading time for skipped words to 0
+    rename(gaze_rt = firstrun.dur) %>%
+    
+    # firstfix.dur = "first fixation"
+    mutate(firstfix.dur = as.double(firstfix.dur)) %>%
+    mutate(firstfix.dur = if_else(is.na(firstfix.dur), 0, firstfix.dur)) %>% #Set the reading time for skipped words to 0
+    rename(firstfix_rt = firstfix.dur) %>%
+    
+    group_by(trialid, ianum, ia) %>%
+      summarise(total_rt = mean(total_rt, na.rm = T),
+                gaze_rt = mean(gaze_rt, na.rm = T),
+                firstfix_rt = mean(firstfix_rt, na.rm = T)) %>%
+    ungroup() 
+  
+  # Word frequency list
+  word_freq = read.csv(paste("../data/lm_results/mgpt_sc/",lang,"_preds.csv", sep=""), header = T, sep = "\t") %>%
+    dplyr::select(ia, freq) %>%
+    rename(model_ia = ia) %>%
+    group_by(model_ia) %>%
+      summarise(freq = unique(freq)) %>%
+    ungroup() %>%
+    mutate(freq = if_else(freq < 0, 0, freq))
+  
+  # MONOLINGUAL TRANSFORMER 30M WORDS
+  monot_30m_df = read.csv(paste0("../data/lm_results/monot_30m/",lang,".tsv"), header = T, sep = "\t") %>%
+    rename(trialid = sample_id, surp = score, ianum = word_id, model_ia = word, ent = shannon) %>%
+    mutate(model = "monot_30m") %>%
+    mutate(ianum = ianum + 1, trialid = trialid + 1) %>%
+    dplyr::select(-X, -renyi) %>%
+    merge(word_freq, by=c("model_ia")) %>%
+    mutate(len = str_length(model_ia)) %>%
+    do_lags(.) %>%
+    merge(rt_data, by=c("trialid", "ianum"))  %>%
+    mutate(mismatch = model_ia != ia)
+    print(paste0(lang, " / monot 30m: Filtered a total of ", sum(monot_30m_df$mismatch), "rows, or ", sum(monot_30m_df$mismatch)/nrow(monot_30m_df), " of the data."))
+  
+  
+  # MONOLINGUAL TRANSFORMER ALL WORDS
+  monot_all_df = read.csv(paste0("../data/lm_results/monot_all/",lang,".tsv"), header = T, sep = "\t") %>%
+    rename(trialid = sample_id, surp = score, ianum = word_id, model_ia = word, ent = shannon) %>%
+    mutate(model = "monot_all") %>%
+    mutate(ianum = ianum + 1, trialid = trialid + 1) %>%
+    dplyr::select(-X, -renyi) %>%
+    merge(word_freq, by=c("model_ia")) %>%
+    mutate(len = str_length(model_ia)) %>%
+    do_lags(.) %>%    
+    merge(rt_data, by=c("trialid", "ianum"))  %>%
+    mutate(mismatch = model_ia != ia)
+    print(paste0(lang, " / monot all: Filtered a total of ", sum(monot_all_df$mismatch), "rows, or ", sum(monot_all_df$mismatch)/nrow(monot_all_df), " of the data."))
+  
+  # MGPT SHORT CONTEXT DATA
+  mgpt_sc_df = read.csv(paste("../data/lm_results/mgpt_sc/",lang,"_preds.csv", sep=""), header = T, sep = "\t") %>%
+    mutate(ia_idx = ianum) %>%
+    rename(trialid = sentnum, sentnum = trialid, model_ia = ia )%>%
+    group_by(trialid) %>%
+      arrange(sentnum, ia_idx) %>%
+      mutate(ianum = 1:n()) %>%
+    ungroup() %>%
+    dplyr::select(-sentnum, -ia_idx) %>%
+    mutate(model = "mgpt_sc") %>%
+    dplyr::select(-X, -freq) %>%
+    merge(word_freq, by=c("model_ia")) %>%
+    mutate(len = str_length(model_ia)) %>%
+    do_lags(.) %>%    
+    merge(rt_data, by=c("trialid", "ianum")) %>%
+    arrange(trialid, ianum) %>%
+    mutate(mismatch = model_ia != ia)
+    print(paste0(lang, " / MGPT SC: Filtered a total of ", sum(mgpt_sc_df$mismatch), "rows, or ", sum(mgpt_sc_df$mismatch)/nrow(mgpt_sc_df), " of the data."))
+
+  # MGPT LONG CONTEXT DATA
+  mgpt_lc_df = read.csv(paste("../data/lm_results/mgpt_lc/",lang,"_preds.csv", sep=""), header = T, sep = "\t") %>%
+    rename(model_ia = ia) %>%
+    mutate(ianum = ianum + 1) %>%
+    dplyr::select(-X, -freq) %>%
+    mutate(model = "mgpt_lc") %>%
+    merge(word_freq, by=c("model_ia")) %>%
+    mutate(len = str_length(model_ia)) %>%
+    do_lags(.) %>%
+    merge(rt_data, by=c("trialid", "ianum")) %>%
+    mutate(mismatch = model_ia != ia)
+    print(paste0(lang, " / MGPT LC: Filtered a total of ", sum(mgpt_lc_df$mismatch), "rows, or ", sum(mgpt_lc_df$mismatch)/nrow(mgpt_lc_df), " of the data."))
+
+  merged_df = rbind(monot_30m_df, monot_all_df, mgpt_sc_df, mgpt_lc_df) %>%
+    mutate(lang = lang) %>%
+    #mutate(match = model_ia == ia) %>%
+    filter(model_ia == ia) %>%
+    arrange(model, trialid, ianum)
+  
+  print("\n")
+  write.csv(merged_df, paste0("../data/merged_data/", lang, ".csv"))
+  
+}
+
+
+```
+
+
+
+

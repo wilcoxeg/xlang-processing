@@ -1,0 +1,179 @@
+---
+title: "Analysis for x linguistic processing"
+output: html_notebook
+---
+
+```{r}
+shhh <- suppressPackageStartupMessages # It's a library, so shhh!
+
+shhh(library( mgcv ))
+shhh(library(dplyr))
+shhh(library(ggplot2))
+shhh(library(lme4))
+shhh(library(tidymv))
+shhh(library(gamlss))
+shhh(library(gsubfn))
+shhh(library(lmerTest))
+shhh(library(tidyverse))
+shhh(library(boot))
+shhh(library(rsample))
+shhh(library(plotrix))
+shhh(library(ggrepel))
+shhh(library(mgcv))
+library(jmuOutlier) # For paired permutation tests
+
+options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
+library(jglmm)
+jglmm_setup()
+
+theme_set(theme_bw())
+options(digits=4)
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r}
+
+set.seed(444)
+langs = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "sp", "tr", "ru")
+psychometrics = c("total_rt", "gaze_rt", "firstfix_rt")
+models = c("mgpt_sc", "mgpt_lc", "monot_30m", "monot_all")
+comps = c("target", "baseline")
+
+```
+
+```{r}
+
+get_model_coeffs = function(form, df, d_var, mixed_effects, num_folds=10){
+  
+  folds <- cut(seq(1,nrow(df)),breaks=num_folds,labels=FALSE)
+  
+  models = data.frame()
+  for(i in 1:num_folds){
+    testIndexes = which(folds==i,arr.ind=TRUE)
+    testData = df[testIndexes,]
+    trainData = df[-testIndexes,]
+
+    if(mixed_effects){
+      model = lmer(as.formula(form), data = trainData)
+    } else {
+      model = lm(as.formula(form), data = trainData)
+    }
+
+    models = rbind(models, model$coefficients)
+  }
+
+  return(models)
+}
+
+```
+
+
+```{r}
+
+regression_form = "gaze_rt ~ surp + prev_surp + prev2_surp + ent + prev_ent + prev2_ent + freq + len + prev_freq + prev_len + prev2_freq + prev2_len"
+
+# This is a dummy df just to get column names
+df = read.csv(paste0("../data/merged_data/en.csv"))
+
+# This is just to get the column names
+m = lm(as.formula(regression_form), data = df)
+term_names = rownames(coef(summary(m,complete = TRUE)) )
+
+xlang_coeff_df = data.frame()
+
+for (l in langs) {
+  for (m in models) {
+
+  df = read.csv(paste0("../data/merged_data/", l, ".csv")) %>%
+    filter(model == m) #%>%
+    # Uncomment if we want a scaled analysis
+    #mutate(
+      #surp = scale(surp), prev_surp = scale(prev_surp), prev2_surp = scale(prev2_surp),
+      #ent = scale(ent), prev_ent = scale(prev_ent), prev2_ent = scale(prev2_ent),
+      #len = scale(len), prev_len = scale(prev_len), prev2_len = scale(prev2_len),
+      #freq = scale(freq), prev_freq = scale(prev_freq), prev2_freq = scale(prev2_freq)
+    #)
+  
+  coeff_df = get_model_coeffs(regression_form, df=df, d_var = "gazr_rt", mixed_effects = F)
+  colnames(coeff_df) = term_names
+
+  xlang_coeff_df = rbind(xlang_coeff_df, coeff_df %>% mutate(lang = l, model = m))
+
+  }
+}
+
+```
+
+```{r}
+
+coeff_plotting_df = xlang_coeff_df %>%
+  gather(name, value, c(1:length(term_names)-1)) %>%
+  group_by(lang, name, model) %>%
+    summarise(m = mean(value),
+              s = std.error(value),
+              upper = m + s * 1.96,
+              lower = m - s * 1.996) %>%
+  ungroup() %>%
+  filter(model != "mgpt_sc") %>%
+  filter(name %in% c("surp", "len", "freq", "ent", "prev_surp", "prev_ent", "prev_freq", "prev_len",
+                     "prev2_surp", "prev2_len", "prev2_freq", "prev2_ent")) %>%
+  mutate(position = case_when(
+    name %in% c("surp", "len", "freq", "ent") ~ "0",
+    name %in% c("prev_surp", "prev_len", "prev_freq", "prev_ent") ~ "1",
+    name %in% c("prev2_surp", "prev2_len", "prev2_freq", "prev2_ent") ~ "2"
+  )) %>%
+  mutate(predictor = case_when(
+    name %in% c("surp", "prev_surp", "prev2_surp") ~ "Surprisal",
+    name %in% c("ent", "prev_ent", "prev2_ent") ~ "Entropy",
+    name %in% c("freq", "prev_freq", "prev2_freq") ~ "Frequency",
+    name %in% c("len", "prev_len", "prev2_len") ~ "Length"
+  )) %>%
+  mutate(predictor = factor(predictor, levels = c("Surprisal", "Entropy", "Frequency", "Length"))) %>%
+  mutate(position = factor(position, labels = c("w t", "w t-1", "w t-2"), levels = c("0", "1", "2")))
+```
+
+
+
+```{r}
+coeff_plotting_df %>%
+    mutate(lang = factor(lang, levels = c("du", "en", "fi", "ge", "gr", "he", "it", "ko", "ru", "sp", "tr"),
+       labels = c("Dutch", "English", "Finnish", "German", "Greek", "Hebrew", "Italian", "Korean", "Russian",
+                  "Spanish", "Turkish"))) %>%
+  mutate(model = factor(model, levels=c("mgpt_lc", "monot_30m", "monot_all"), labels = c("mGPT(long)", "monoT(30m)", "monoT(all)"))) %>%
+  ggplot(aes(x = position, y = m, fill = model)) +
+    geom_bar(stat="identity", position = position_dodge(width = 0.9)) +
+    geom_errorbar(aes(ymin=lower, ymax=upper), position = position_dodge(width = 0.9), width = 0.1) +
+    geom_hline(yintercept = 0, color = "black") +
+  ylab("Coefficient Estimate (ms/bit)") +
+  facet_grid(predictor~lang, scales = "free_y") +
+  scale_x_discrete(labels = c(bquote(w[t]), bquote(w[t-1]), bquote(w[t-2]))) +
+  #scale_color_manual(values = c("#225ea8", "#41b6c4", "#a1dab4")) +
+  theme(
+    text = element_text(family = "serif"),
+    axis.title.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+ggsave("./images/coeffs.pdf", width = 10, height = 5)
+#ggsave("./images/coeffs_scaled.pdf", width = 10, height = 5)
+
+
+```
+```{r}
+coeff_plotting_df %>%
+  filter(name == "surp") %>%
+  group_by(model) %>%
+    summarise(m = mean(m)) %>%
+  ungroup()
+
+```
+
+
+
+
+
+
+
+
+
+
