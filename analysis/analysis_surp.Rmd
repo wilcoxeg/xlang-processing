@@ -89,9 +89,17 @@ for (lang in langs) {
 
   print(paste0("Fitting model for ", lang))
   
-  df = read.csv(paste0("../data/merged_data/", lang, ".csv"))
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv")) #%>%
+    # BELOW: Code to turn the frequencies into unigram surprisals
+    #mutate(freq = if_else(is.na(freq), 0.0, -1 * log2(freq)),
+           #prev_freq = if_else(is.na(prev_freq), 0.0, -1 * log2(prev_freq)),
+           #prev2_freq = if_else(is.na(prev2_freq), 0.0, -1 * log2(prev2_freq))) %>%
+    #filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    #filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq))
+    
   
   for (m in models) {
+    
     
     df_eval = df %>% filter(model == m) %>%
       drop_na()
@@ -246,7 +254,7 @@ dll_surp_plotting_df %>%
     #panel.border = element_rect(color = "grey", fill =  NA, size = 0.5)
   )
 
-ggsave("./images/dll_surprisal.pdf", device = "pdf", width = 9.2, height = 4)
+#ggsave("./images/dll_surprisal.pdf", device = "pdf", width = 9.2, height = 4)
 
 
 ```
@@ -301,7 +309,7 @@ dll_ppl_plot %>%
 
   )
 
-ggsave("./images/dll_vs_ppl.pdf", device="pdf", width = 5, height = 3)
+#ggsave("./images/dll_vs_ppl.pdf", device="pdf", width = 5, height = 3)
 
 
 ```

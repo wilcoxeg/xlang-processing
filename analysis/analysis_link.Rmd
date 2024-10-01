@@ -117,6 +117,8 @@ write.csv(dll_raw_df, "./dll_raw_df_stats.csv")
 ```
 
 ```{r}
+dll_raw_df = read.csv("./dll_raw_df_stats.csv")
+
 dll_stats_df = data.frame()
 dll_comp_stats_df = data.frame()
 for (m in models){
@@ -148,39 +150,31 @@ for (m in models){
 
         target_df_linear = dll_raw_df %>% filter(model == m, lang == l, names == "linear_target")
         baseline_df_linear = dll_raw_df %>% filter(model == m, lang == l, names == "linear_baseline")
-        dll_linear = data.frame(dll = target_df_linear$logliks - baseline_df_linear$logliks) %>%
-          drop_na() %>%
-          mutate( m = mean(dll), s=sd(dll)) %>%
-          filter(dll < m + s * 3, dll > m - s * 3)
-        dll_linear = dll_linear$dll
-        #dll_linear = dll_linear[!is.na(dll_linear)]
-        linear_ttest = perm.test(dll_linear, num.sim = 1)
+        dll_linear = data.frame(dll = target_df_linear$logliks - baseline_df_linear$logliks) 
         
         target_df_nonlinear = dll_raw_df %>% filter(model == m, lang == l, names == "nonlinear_target")
         baseline_df_nonlinear = dll_raw_df %>% filter(model == m, lang == l, names == "nonlinear_baseline")
-        dll_nonlinear = data.frame(dll = target_df_nonlinear$logliks- baseline_df_nonlinear$logliks) %>%
-          drop_na() %>%
-          mutate( m = mean(dll), s=sd(dll)) %>%
-          filter(dll < m + s * 3, dll > m - s * 3)
-        dll_nonlinear = dll_nonlinear$dll
-        #dll_nonlinear = dll_nonlinear[!is.na(dll_nonlinear)]
-        nonlinear_ttest = perm.test(dll_nonlinear, num.sim = 1)
+        dll_nonlinear = data.frame(dll = target_df_nonlinear$logliks- baseline_df_nonlinear$logliks)
         
-        comp_ttest = perm.test(dll_nonlinear, dll_linear, num.sim = 1000)
+        target_df_comp = data.frame(dll_linear = dll_linear$dll, dll_nonlinear =  dll_nonlinear$dll) %>%
+          drop_na() %>%
+          mutate(dll_comp = dll_linear - dll_nonlinear) %>%
+          # Remove outliners
+          mutate(outlier = if_else(abs(dll_comp) > mean(dll_comp) + (3 * sd(dll_comp)), T, F)) %>%
+          filter( ! outlier==T)
+        
+        comp_ptest = perm.test(target_df_comp$dll_linear, target_df_comp$dll_nonlinear, num.sim = 1000, paried =T)
         
         dll_df_linear = data.frame(
-          m = mean(dll_linear), upper = mean(dll_linear) + (1.96 * std.error(dll_linear)), lower = mean(dll_linear) - (1.96 * std.error(dll_linear)),
-          ttest_pval = linear_ttest$p.value,
-          #Comparison information (moved)
-          ttest_pval_comp = comp_ttest$p.value,
+          m = mean(target_df_comp$dll_linear), upper = mean(target_df_comp$dll_linear) + (1.96 * std.error(target_df_comp$dll_linear)), lower = mean(target_df_comp$dll_linear) - (1.96 * std.error(target_df_comp$dll_linear)),
+          ptest_pval_comp = comp_ptest$p.value,
           # Meta info
           lang = l, model = m, is_linear = "linear"
         )
         
         dll_df_nonlinear = data.frame(
-          m = mean(dll_nonlinear), upper = mean(dll_nonlinear) + (1.96 * std.error(dll_nonlinear)), lower = mean(dll_nonlinear) - (1.96 * std.error(dll_nonlinear)), ttest_pval = nonlinear_ttest$p.value,
-          #Comparison information (moved)
-          ttest_pval_comp = comp_ttest$p.value,
+          m = mean(target_df_comp$dll_nonlinear), upper = mean(target_df_comp$dll_nonlinear) + (1.96 * std.error(target_df_comp$dll_nonlinear)), lower = mean(target_df_comp$dll_nonlinear) - (1.96 * std.error(target_df_comp$dll_nonlinear)),
+          ptest_pval_comp = comp_ptest$p.value,
           # Meta info
           lang = l, model = m, is_linear = "nonlinear"
         )
@@ -193,9 +187,10 @@ for (m in models){
 }
 
 linear_comp_df %>%
-  filter(ttest_pval_comp < 0.05)
+  filter(ptest_pval_comp < 0.05)
 
 ```
+
 
 
 
@@ -226,7 +221,7 @@ linear_comp_df %>%
     axis.text.x = element_text(angle = 35, hjust = 1)
   )
 
-ggsave("./images/dll_linear_comp.pdf", device ="pdf", width = 4, height = 4)
+#ggsave("./images/dll_linear_comp.pdf", device ="pdf", width = 4, height = 4)
 
 
 ```
