@@ -221,7 +221,7 @@ linear_comp_df %>%
     axis.text.x = element_text(angle = 35, hjust = 1)
   )
 
-#ggsave("./images/dll_linear_comp.pdf", device ="pdf", width = 4, height = 4)
+ggsave("./images/dll_linear_comp.pdf", device ="pdf", width = 4, height = 4)
 
 
 ```
