@@ -22,9 +22,9 @@ shhh(library(ggrepel))
 shhh(library(mgcv))
 library(jmuOutlier) # For paired permutation tests
 
-options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
-library(jglmm)
-jglmm_setup()
+#options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
+#library(jglmm)
+#jglmm_setup()
 
 theme_set(theme_bw())
 options(digits=4)
@@ -73,7 +73,9 @@ get_model_coeffs = function(form, df, d_var, mixed_effects, num_folds=10){
 regression_form = "gaze_rt ~ surp + prev_surp + prev2_surp + ent + prev_ent + prev2_ent + freq + len + prev_freq + prev_len + prev2_freq + prev2_len"
 
 # This is a dummy df just to get column names
-df = read.csv(paste0("../data/merged_data/en.csv"))
+df = read.csv(paste0("../data/merged_data/en.csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq))
 
 # This is just to get the column names
 m = lm(as.formula(regression_form), data = df)
@@ -85,14 +87,16 @@ for (l in langs) {
   for (m in models) {
 
   df = read.csv(paste0("../data/merged_data/", l, ".csv")) %>%
-    filter(model == m) #%>%
+    filter(model == m)  %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq)) #%>%
     # Uncomment if we want a scaled analysis
     #mutate(
       #surp = scale(surp), prev_surp = scale(prev_surp), prev2_surp = scale(prev2_surp),
       #ent = scale(ent), prev_ent = scale(prev_ent), prev2_ent = scale(prev2_ent),
       #len = scale(len), prev_len = scale(prev_len), prev2_len = scale(prev2_len),
       #freq = scale(freq), prev_freq = scale(prev_freq), prev2_freq = scale(prev2_freq)
-    #)
+   # )
   
   coeff_df = get_model_coeffs(regression_form, df=df, d_var = "gazr_rt", mixed_effects = F)
   colnames(coeff_df) = term_names

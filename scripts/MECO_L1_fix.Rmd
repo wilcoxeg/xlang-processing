@@ -1,0 +1,51 @@
+---
+# Multilingual Eye-Tracking Corpus (MECO) ID Fix
+# E. Chodroff, R. Cotterell, A. Opedal, E. Wilcox
+# 4 Oct 2024
+---
+
+```{r}
+library(dplyr)
+
+```
+
+```{r}
+
+# Load MECO V1.1 or V1.2 L1 joint_data_trimmed dataset
+load("../data/eye_tracking_data/joint_data_trimmed.rda")
+
+# Identify non-unique IDs based on the Trial ID and IA Number columns (trialid, ianum)  
+# We are ignoring Sentence Number (sentnum) errors.
+non_unique_ids <- joint.data %>% 
+  group_by(lang, trialid, ianum) %>%
+  summarise(unique_words = length(unique(ia))) %>%
+  filter(unique_words > 1)
+
+# English: fix trialid 3 - ianum 149 on: 149 is blank for half of the participants, 
+# but even for these participants, sometimes there is collected data (i.e., ia = "" and nrun = 1, not NA)
+# the solution below makes 149 a "dead row" and removes it - 
+# note this inflates the total ianum for trialid 3 by one
+affected_subjs <- subset(joint.data, lang == "en" & trialid == 3 & ianum == 149 & ia == "performance-")$subid
+joint.data <- joint.data %>% 
+    mutate(ianum = ifelse(lang == "en" & subid %in% affected_subjs & trialid == 3 & ianum >= 150, 
+                          ianum + 1, ianum)) %>%
+    filter(!(trialid == 3 & ianum == 149))
+
+# Russian: add 1 to trialid from 4 on for ru_8
+joint.data <- joint.data %>%
+    mutate(trialid = ifelse(subid == "ru_8" & trialid >= 4, trialid + 1, trialid))
+
+# Estonian: add 1 to trialid from 1 on for ee_22, add 1 to trialid from 4 on for ee_09
+joint.data <- joint.data %>%
+  mutate(trialid = ifelse(subid == "ee_22" & trialid >= 1, trialid + 1, trialid),
+         trialid = ifelse(subid == "ee_09" & trialid >= 4, trialid +1, trialid))
+
+# Check for non-unique IDs again: it should have 0 rows now
+non_unique_ids <- joint.data %>% 
+  group_by(lang, trialid, ianum) %>%
+  summarise(unique_words = length(unique(ia)), nSubj = n()) %>%
+  filter(unique_words > 1)
+
+save(joint.data, file="../data/joint_data.rda")
+
+```

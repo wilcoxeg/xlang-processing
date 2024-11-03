@@ -90,7 +90,9 @@ for (lang in langs) {
 
   for(m in models){
     
-  df = read.csv(paste0("../data/merged_data/", lang, ".csv"))%>%
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq)) %>%
     filter(model == m)
   
     regression_forms = c(
@@ -312,7 +314,9 @@ for(m in models){
   
 for (lang in langs) {
   print(paste0("Fitting model for ", lang))
-  merged_df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>% rename(psychometric = gaze_rt)
+  merged_df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq)) %>% rename(psychometric = gaze_rt)
   mean_predictors = merged_df %>% summarise(surp = mean(surp), len = mean(len), freq = mean(freq))
   smooths = merged_df %>% fit_gam(., mean_predictors, is_linear=T)
   #Fix 0 surprisal = 0 ms
@@ -322,7 +326,9 @@ for (lang in langs) {
 
 for (lang in langs) {
   print(paste0("Fitting model for ", lang))
-  merged_df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>% rename(psychometric = gaze_rt)
+  merged_df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq)) %>% rename(psychometric = gaze_rt)
   mean_predictors = merged_df %>% summarise(surp = mean(surp), len = mean(len), freq = mean(freq))
   smooths = merged_df %>% fit_gam(., mean_predictors, is_linear=F)
   #Fix 0 surprisal = 0 ms

@@ -62,6 +62,8 @@ do_lags = function(df) {
 
 ```{r}
 
+lang="en"
+
 for (lang in langs) {
   
   # HUMAN RT DATA
@@ -94,6 +96,7 @@ for (lang in langs) {
     group_by(model_ia) %>%
       summarise(freq = unique(freq)) %>%
     ungroup() %>%
+    mutate(freq = -log2(freq)) %>%
     mutate(freq = if_else(freq < 0, 0, freq))
   
   # MONOLINGUAL TRANSFORMER 30M WORDS

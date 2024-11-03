@@ -22,9 +22,9 @@ shhh(library(ggrepel))
 shhh(library(mgcv))
 library(jmuOutlier) # For paired permutation tests
 
-#options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
-#library(jglmm)
-#jglmm_setup()
+options(JULIA_HOME = "/Applications/Julia-1.11.app/Contents/Resources/julia/bin/")
+library(jglmm)
+jglmm_setup()
 
 theme_set(theme_bw())
 options(digits=4)
@@ -52,13 +52,14 @@ model_cross_val = function(form, df, d_var, mixed_effects, num_folds=10){
   estimates <- c()
   models <- c()
   for(i in 1:num_folds){
+    print(paste(" --> Fold", i, sep =" "))
     testIndexes = which(folds==i,arr.ind=TRUE)
     testData = df[testIndexes,]
     trainData = df[-testIndexes,]
 
     if(mixed_effects){
-      #model = lmer(as.formula(form), data = trainData)
-      model = jglmm(as.formula(form), data = trainData)
+      model = lmer(as.formula(form), data = trainData)
+      #model = jglmm(as.formula(form), data = trainData)
 
     } else {
       model = lm(as.formula(form), data = trainData)
@@ -89,13 +90,9 @@ for (lang in langs) {
 
   print(paste0("Fitting model for ", lang))
   
-  df = read.csv(paste0("../data/merged_data/", lang, ".csv")) #%>%
-    # BELOW: Code to turn the frequencies into unigram surprisals
-    #mutate(freq = if_else(is.na(freq), 0.0, -1 * log2(freq)),
-           #prev_freq = if_else(is.na(prev_freq), 0.0, -1 * log2(prev_freq)),
-           #prev2_freq = if_else(is.na(prev2_freq), 0.0, -1 * log2(prev2_freq))) %>%
-    #filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
-    #filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq))
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq))
     
   
   for (m in models) {
@@ -237,7 +234,7 @@ dll_surp_plotting_df %>%
   ggplot(aes(x = psychometric, y = mean, color = psychometric)) +
     geom_hline(yintercept=0, color="black", linetype="dashed", alpha =0.5) +
     geom_point(position = position_dodge(width = 0.6)) +
-    geom_text(aes(y = 0.08, label = sig), size = 3, show.legend = FALSE) +
+    geom_text(aes(y = 0.07, label = sig), size = 3, show.legend = FALSE) +
     geom_errorbar(aes(ymin=lower, ymax=upper), width = 0.1, position = position_dodge(width = 0.6)) +
     ylab("Delta Log Liklihood (average  per word)") + 
     xlab("") +
@@ -254,7 +251,7 @@ dll_surp_plotting_df %>%
     #panel.border = element_rect(color = "grey", fill =  NA, size = 0.5)
   )
 
-#ggsave("./images/dll_surprisal.pdf", device = "pdf", width = 9.2, height = 4)
+ggsave("./images/dll_surprisal.pdf", device = "pdf", width = 9.2, height = 4)
 
 
 ```
@@ -309,7 +306,7 @@ dll_ppl_plot %>%
 
   )
 
-#ggsave("./images/dll_vs_ppl.pdf", device="pdf", width = 5, height = 3)
+ggsave("./images/dll_vs_ppl.pdf", device="pdf", width = 5, height = 3)
 
 
 ```
@@ -329,24 +326,30 @@ df_all_langs = data.frame()
 for (lang in langs) {
   df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
     mutate(lang = as.factor(lang))
-  df_all_langs = rbind(df_all_langs, df)
+  df_all_langs = rbind(df_all_langs, df) %>%
+  filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+  filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq))
 }
 
 #Scale things due to convergence issues w/ the random effects
 df_all_langs = df_all_langs %>%
   group_by(model) %>%
-    mutate(surp = scale(surp), len = scale(len), freq = scale(freq), gaze_rt = scale(gaze_rt), firstfix_rt = scale(firstfix_rt), total_rt = scale(total_rt)) %>%
+    mutate(surp = scale(surp), len = scale(len), freq = scale(freq), gaze_rt = scale(gaze_rt),
+           prev_surp = scale(prev_surp), prev_len = scale(prev_len), prev_freq = scale(prev_freq)) %>%
   ungroup()
 df_all_langs= df_all_langs[sample(1:nrow(df_all_langs)), ]
   
 
 dll_raw_df = data.frame()
+
 for (m in models){
+  print(m)
 for (psychometric in c("gaze_rt")) {
-    
+  
+  # We remove the prev2 surp due to convergance issues
   regression_forms = c(
-    paste0(psychometric, " ~ surp + prev_surp + prev2_surp + freq + len + prev_freq + prev_len + prev2_freq + prev2_len + (surp + prev_surp + prev2_surp + freq + len + prev_freq + prev_len + prev2_freq + prev2_len | lang)"),
-    paste0(psychometric, " ~ freq + len + prev_freq + prev_len + prev2_freq + prev2_len + (freq + len + prev_freq + prev_len + prev2_freq + prev2_len | lang)")
+    paste0(psychometric, " ~ surp + prev_surp + freq + len + prev_freq + prev_len + (surp + prev_surp + freq + len + prev_freq + prev_len | lang)"),
+    paste0(psychometric, " ~ freq + len + prev_freq + prev_len + (freq + len + prev_freq + prev_len  | lang)")
   )
   
   to_fit_df = df_all_langs %>% filter(model == m) %>% drop_na()
@@ -359,6 +362,11 @@ for (psychometric in c("gaze_rt")) {
   dll_raw_df = rbind(dll_raw_df, loglik_df)
 }
 }
+
+```
+
+
+```{r}
 
 # Tests for mgpt model
 target_df = dll_raw_df %>% filter(names == "target", model == "mgpt_lc")

@@ -24,6 +24,15 @@ model = GPT2LMHeadModel.from_pretrained("sberbank-ai/mGPT")`
 
 You can run the code on a SLURM cluster with `euler.sh`
 
+## Merging the Data
+
+* Need to have `joint_data_trimmed.rda` downloaded in the `/data/eye_tracking_data/` directory
+* Run the script `/scripts/MECO_L1_fix.Rmd` to fix the various bugs in the Meco data (specific bugs are documented in the script). This produces `joint_data.rda`.
+* Run `/scripts/separate_langs.Rmd` to separate out the individual langs. This saves the language data in the `/data/rt_data_l1/` directory
+* Run `/scripts/clean_data.Rmd`. This merges the data with the model outputs and saves the by-langauge merged files in the `/data/merged_data/` directory
+	- Note: This script has been changed since the original published version of the paper so that `freq` is now the negative log2 of frequency, i.e., it is now unigram surprisal.
+
+
 ## Analysis 
 
 `clean_data.Rmd` takes the outputs from above and cleans them up for analysis.

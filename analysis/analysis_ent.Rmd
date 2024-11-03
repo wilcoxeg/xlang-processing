@@ -22,9 +22,9 @@ shhh(library(ggrepel))
 shhh(library(mgcv))
 library(jmuOutlier) # For paired permutation tests
 
-options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
-library(jglmm)
-jglmm_setup()
+#options(JULIA_HOME = "/Applications/Julia-1.8.app/Contents/Resources/julia/bin/")
+#library(jglmm)
+#jglmm_setup()
 
 theme_set(theme_bw())
 options(digits=4)
@@ -91,7 +91,9 @@ for (lang in langs) {
 
   print(paste0("Fitting model for ", lang))
   
-  df = read.csv(paste0("../data/merged_data/", lang, ".csv"))
+  df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq))
   
   for (m in models) {
     
@@ -242,6 +244,8 @@ regression_names = c("add", "replace", "baseline")
 df_all_langs = data.frame()
 for (lang in langs) {
   df = read.csv(paste0("../data/merged_data/", lang, ".csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq)) %>%
     mutate(lang = as.factor(lang))
   df_all_langs = rbind(df_all_langs, df)
 }
@@ -304,6 +308,8 @@ df_all_langs = data.frame()
 for (lang in langs) {
 
   df = read.csv(paste0("./merged_data/l1/", lang, "_clean_data.csv")) %>%
+    filter(freq > 0, prev_freq > 0, prev2_freq > 0) %>%
+    filter(is.finite(freq) & is.finite(prev_freq) & is.finite(prev2_freq)) %>%
     filter(context == "long") %>%
     mutate(lang = as.factor(lang))
   df_all_langs = rbind(df_all_langs, df)
